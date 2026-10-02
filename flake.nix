@@ -44,7 +44,7 @@
             echo "  ./scripts/check-version.sh  - Check current vs latest version"
             echo "  ./scripts/update-version.sh - Update to latest version"
             echo ""
-            echo "Note: Antigravity packages include hermetic browser integration (Chrome, Chromium, Brave, etc.)"
+            echo "Note: browser-based apps use the system-installed browser when present, else the packaged browserPkg"
           '';
         };
       }

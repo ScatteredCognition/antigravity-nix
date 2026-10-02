@@ -148,12 +148,12 @@ google-antigravity.override { useFHS = false; }
 
 ### Browser Customization & Alternative Browsers
 
-Antigravity GUI applications include hermetic browser integration for features like `/browser` automation. By default, `google-chrome` is used on `x86_64-linux` and `chromium` on `aarch64-linux`.
+Antigravity GUI applications use a Chromium-based browser for features like `/browser` automation. By default, `google-chrome` is used on `x86_64-linux` and `chromium` on `aarch64-linux`.
 
 You can customize the browser package and profile directory using `.override`:
 
 ```nix
-# Example 1: Use open-source Chromium (browserProfileDir defaults automatically to ~/.config/chromium)
+# Example 1: Use open-source Chromium
 google-antigravity.override {
   browserPkg = pkgs.chromium;
 }
@@ -161,19 +161,20 @@ google-antigravity.override {
 # Example 2: Use Brave Browser
 google-antigravity.override {
   browserPkg = pkgs.brave;
-  browserProfileDir = "$HOME/.config/BraveSoftware/Brave-Browser";
 }
 
-# Example 3: Use Vivaldi
+# Example 3: Use a browser or profile location without a known default
 google-antigravity.override {
-  browserPkg = pkgs.vivaldi;
-  browserProfileDir = "$HOME/.config/vivaldi";
+  browserPkg = pkgs.microsoft-edge;
+  browserProfileDir = "$HOME/.config/microsoft-edge";
 }
 ```
 
-When an alternative browser or profile directory is specified:
-- The executable is automatically resolved from `browserPkg` via `lib.getExe`.
-- A compatibility symlink for `DevToolsActivePort` is created dynamically at runtime so Puppeteer attaches seamlessly.
+`browserProfileDir` defaults to the standard profile directory for `google-chrome`, `chromium`, `ungoogled-chromium`, `brave` and `vivaldi`. Any other `browserPkg` requires an explicit `browserProfileDir`, so a browser is never pointed at another browser's profile by accident.
+
+How the browser is resolved and connected:
+- At runtime the wrapper prefers the system-installed browser (`/run/current-system/sw/bin/<name>`, where `<name>` is the main program of `browserPkg`), so the version matches the one that maintains your profile. It falls back to `browserPkg` when none is installed.
+- When the profile directory is not Google Chrome's, a `DevToolsActivePort` symlink is created in `~/.config/google-chrome` at launch so Antigravity can attach to the browser. An existing real file there is left untouched.
 - An internal compatibility wrapper (`chrome-wrapper`) ensures commands and automation libraries looking for either `google-chrome-stable` or `google-chrome` on `PATH` invoke your configured browser wrapper.
 
 ### Browser Profile Isolation
@@ -184,7 +185,7 @@ By default, Antigravity GUI apps use your user browser profile (e.g. `~/.config/
 google-antigravity.override { useUserProfile = false; }
 ```
 
-This omits the `--user-data-dir` and `--profile-directory` flags, letting the browser manage its own profile independently. Works with both FHS and non-FHS variants.
+This omits the `--user-data-dir` and `--profile-directory` flags, letting the browser manage its own profile independently, and skips the `DevToolsActivePort` symlink. Works with both FHS and non-FHS variants.
 
 ## Usage
 

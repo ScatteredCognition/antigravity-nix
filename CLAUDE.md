@@ -22,12 +22,12 @@ The GUI packages share the heavy-lifting extraction and FHS-wrapping logic via `
 ### Browser Integration Strategy
 
 Antigravity GUI apps require a Chromium-based browser for features like `/browser` automation. The `package.nix` wrapper:
-- Resolves the browser executable hermetically via `lib.getExe browserPkg` (defaults to `google-chrome` on `x86_64-linux` and `chromium` on `aarch64-linux`).
-- Supports arbitrary browser packages (`pkgs.chromium`, `pkgs.brave`, `pkgs.vivaldi`) via `browserPkg` and `browserProfileDir` overrides.
+- Takes the browser from `browserPkg` (defaults to `google-chrome` on `x86_64-linux` and `chromium` on `aarch64-linux`). At runtime it prefers `/run/current-system/sw/bin/<mainProgram>` and falls back to `lib.getExe browserPkg`: the browser opens the user's live profile, so it must match the version the user runs, and this flake's nixpkgs pin can lag behind it.
+- Supports arbitrary browser packages (`pkgs.chromium`, `pkgs.brave`, `pkgs.vivaldi`) via `browserPkg` and `browserProfileDir` overrides. `browserProfileDir` has defaults only for known browsers and throws for others, so a browser is never pointed at another browser's profile.
 - Ensures extensions installed in the user's browser profile are available (`useUserProfile = true`).
 - Sets `CHROME_BIN` and `CHROME_PATH` environment variables.
-- Dynamically creates a `DevToolsActivePort` symlink when an alternative profile directory is used so Puppeteer CDP connects seamlessly.
-- Exposes both `google-chrome-stable` and `google-chrome` on `PATH` via `chrome-wrapper` (matching upstream Linux packaging and tooling discovery fallbacks like Puppeteer/Selenium).
+- Creates a `DevToolsActivePort` symlink in `~/.config/google-chrome` from the app launchers (`linkDevToolsPort`) when the profile directory is elsewhere, because the bundled `chrome-devtools-mcp` reads the port file from Google Chrome's config directory. It never replaces a real file and is skipped when `useUserProfile = false`.
+- Exposes both `google-chrome-stable` and `google-chrome` on `PATH` via `chrome-wrapper` (matching upstream Linux packaging and tooling discovery fallbacks like Puppeteer/Selenium). In the FHS env the wrapper is `lib.hiPrio` so it wins over `google-chrome`'s own binaries of the same name.
 
 ### Version Detection Architecture
 
@@ -148,7 +148,7 @@ node scripts/test.mjs
 The packaging sets `CHROME_BIN`/`CHROME_PATH` to `chrome-wrapper` and exposes both `google-chrome-stable` and `google-chrome` on `PATH`. If Antigravity or `/browser` cannot find or connect to the browser:
 
 1. Verify `browserPkg` evaluates and is permitted (e.g., `allowUnfree = true` when using default `google-chrome` on `x86_64-linux`, or override with `browserPkg = pkgs.chromium`).
-2. If using an alternative browser (Brave, Vivaldi), verify `browserProfileDir` points to the correct profile directory so `DevToolsActivePort` is symlinked to `~/.config/google-chrome/DevToolsActivePort`.
+2. If using an alternative browser (Brave, Vivaldi), verify `browserProfileDir` points to the correct profile directory and that `~/.config/google-chrome/DevToolsActivePort` is a symlink into it. A regular file at that path (left by Google Chrome) blocks the link; the launcher prints a warning to stderr.
 3. Check the wrapper script: `CHROME_BIN=/path/to/wrapper/bin/google-chrome-stable /path/to/wrapper/bin/google-chrome-stable --version`.
 
 ### Workflow doesn't create PR

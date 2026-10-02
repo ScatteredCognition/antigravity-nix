@@ -64,12 +64,23 @@
   ),
   useSystemChromeProfile ? null,
   google-chrome ? null,
-  browserPkg ? (if stdenv.hostPlatform.isAarch64 && stdenv.hostPlatform.isLinux then chromium else google-chrome),
+  browserPkg ? (
+    if stdenv.hostPlatform.isAarch64 && stdenv.hostPlatform.isLinux then chromium else google-chrome
+  ),
+  # Pointing a browser at another browser's profile can corrupt it, so only
+  # default the directory for browsers whose location is known.
   browserProfileDir ? (
-    if browserPkg != null && lib.hasInfix "chromium" (lib.getName browserPkg) then
-      "$HOME/.config/chromium"
-    else
-      "$HOME/.config/google-chrome"
+    {
+      google-chrome = "$HOME/.config/google-chrome";
+      chromium = "$HOME/.config/chromium";
+      ungoogled-chromium = "$HOME/.config/chromium";
+      brave = "$HOME/.config/BraveSoftware/Brave-Browser";
+      vivaldi = "$HOME/.config/vivaldi";
+    }
+    .${lib.getName browserPkg} or (throw ''
+      google-antigravity: no default profile directory known for ${lib.getName browserPkg}.
+      Set browserProfileDir, or useUserProfile = false to not use a profile.
+    '')
   ),
   extraBwrapArgs ? [ ],
   srcOverride ? null,
@@ -106,6 +117,7 @@ let
   startupWMClass = if isIde then "Antigravity IDE" else "Antigravity";
 
   browserExe = lib.getExe browserPkg;
+  browserCommand = baseNameOf browserExe;
 
   finalSrc =
     if srcOverride != null then
@@ -116,21 +128,39 @@ let
         sha256 = finalHash;
       };
 
-  # Create a browser wrapper script with DevToolsActivePort forwarding
+  # Create a browser wrapper
   browserScript = writeShellScript "google-chrome-stable" ''
     set -euo pipefail
 
-    target_dir="${browserProfileDir}"
+    # Prefer the system-installed browser: it is the version that last wrote
+    # the user's profile, and this flake's nixpkgs pin can lag well behind it.
+    browser_cmd="/run/current-system/sw/bin/${browserCommand}"
 
-    # Forward DevToolsActivePort for Puppeteer if not using default google-chrome directory
-    if [ "$target_dir" != "$HOME/.config/google-chrome" ]; then
-      mkdir -p "$HOME/.config/google-chrome"
-      ln -sf "$target_dir/DevToolsActivePort" "$HOME/.config/google-chrome/DevToolsActivePort"
+    if [ ! -x "$browser_cmd" ]; then
+      browser_cmd="${browserExe}"
     fi
 
-    exec "${browserExe}" \
-      ${lib.optionalString useUserProfile ''--user-data-dir="$target_dir" --profile-directory=Default''} \
+    exec "$browser_cmd" \
+      ${lib.optionalString useUserProfile ''--user-data-dir="${browserProfileDir}" --profile-directory=Default''} \
       "$@"
+  '';
+
+  # Antigravity attaches to a running browser through the DevToolsActivePort
+  # file in Google Chrome's config directory. When the configured profile
+  # lives elsewhere, link its port file there. Run from the app launchers so
+  # the link exists before the app looks for it. A real port file left there
+  # by Google Chrome is never replaced.
+  linkDevToolsPort = lib.optionalString useUserProfile ''
+    chrome_dir="''${XDG_CONFIG_HOME:-$HOME/.config}/google-chrome"
+    if [ "${browserProfileDir}" != "$chrome_dir" ]; then
+      port_link="$chrome_dir/DevToolsActivePort"
+      if [ -L "$port_link" ] || [ ! -e "$port_link" ]; then
+        mkdir -p "$chrome_dir"
+        ln -sfn "${browserProfileDir}/DevToolsActivePort" "$port_link"
+      else
+        echo "antigravity: $port_link is owned by another browser, not linking it to ${browserProfileDir}" >&2
+      fi
+    fi
   '';
 
   # Package containing google-chrome-stable wrapper and google-chrome symlink
@@ -291,7 +321,8 @@ let
         pkgs.udev
         pkgs.libudev0-shim
         browserPkg
-        chrome-wrapper
+        # google-chrome ships the same bin names; the wrapper must win
+        (lib.hiPrio chrome-wrapper)
       ];
 
     extraBwrapArgs = [
@@ -313,6 +344,7 @@ let
       # matters where that config is absent. Never overrides an existing value.
       export ALSA_PLUGIN_DIR="''${ALSA_PLUGIN_DIR:-${pipewire}/lib/alsa-lib}"
 
+      ${linkDevToolsPort}
       exec ${antigravity-unwrapped}/lib/${pname}/${binaryRelPath} ${lib.optionalString isIde "--user-data-dir=$HOME/.antigravity-ide"} "$@"
     '';
 
@@ -439,6 +471,7 @@ let
       #!/bin/sh
       bin="$1"
       shift
+      ${linkDevToolsPort}
       exec "$bin" ${lib.optionalString isIde ''--user-data-dir="$HOME/.antigravity-ide"''} "$@"
       EOF
       chmod +x $out/lib/${pname}/launcher.sh
@@ -448,7 +481,12 @@ let
         --add-flags $out/lib/${pname}/${binaryRelPath} \
         --set CHROME_BIN ${chrome-wrapper}/bin/google-chrome-stable \
         --set CHROME_PATH ${chrome-wrapper}/bin/google-chrome-stable \
-        --prefix PATH : "${lib.makeBinPath [ chrome-wrapper browserPkg ]}" \
+        --prefix PATH : "${
+          lib.makeBinPath [
+            chrome-wrapper
+            browserPkg
+          ]
+        }" \
         --prefix LD_LIBRARY_PATH : "${lib.makeLibraryPath dlopenLibs}" \
         --set-default ALSA_PLUGIN_DIR "${pipewire}/lib/alsa-lib" \
         --prefix XDG_DATA_DIRS : "${gsettings-desktop-schemas}/share/gsettings-schemas/${gsettings-desktop-schemas.name}:${gtk3}/share/gsettings-schemas/${gtk3.name}"
